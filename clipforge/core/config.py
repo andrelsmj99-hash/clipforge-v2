@@ -59,5 +59,29 @@ def init_directories() -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
-# Auto-initialize directories on import
+def setup_playwright_browsers_path() -> None:
+    """Ensure Playwright finds installed browsers under PyInstaller or normal execution."""
+    if "PLAYWRIGHT_BROWSERS_PATH" in os.environ:
+        return
+
+    # 1. Check Windows %LOCALAPPDATA%/ms-playwright
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        win_ms_playwright = Path(local_app_data) / "ms-playwright"
+        if win_ms_playwright.exists():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(win_ms_playwright)
+            return
+
+    # 2. Check User home cache
+    home_ms_playwright = Path.home() / "AppData" / "Local" / "ms-playwright"
+    if home_ms_playwright.exists():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(home_ms_playwright)
+        return
+
+    # 3. Tell Playwright to use user cache directory instead of temp package dir
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+
+
+# Auto-initialize directories and environment on import
 init_directories()
+setup_playwright_browsers_path()
