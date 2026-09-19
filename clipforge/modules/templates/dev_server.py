@@ -1,4 +1,4 @@
-﻿"""
+"""
 Dev server lifecycle and health check for Canva Apps SDK.
 """
 
@@ -52,8 +52,9 @@ class CanvaDevServer:
         logger.info(f"Starting Canva dev server in {self.app_dir}...")
 
         env = os.environ.copy()
-        if "C:\\Program Files\\nodejs" not in env.get("PATH", ""):
-            env["PATH"] = f"C:\\Program Files\\nodejs;{env.get('PATH', '')}"
+        if os.name == "nt":
+            if "C:\\Program Files\\nodejs" not in env.get("PATH", ""):
+                env["PATH"] = f"C:\\Program Files\\nodejs;{env.get('PATH', '')}"
 
         self.process = subprocess.Popen(
             [npm_cmd, "run", "start"],
@@ -70,7 +71,13 @@ class CanvaDevServer:
                 return True
             time.sleep(1.0)
 
-        logger.warning(f"Canva dev server failed to respond within {wait_timeout}s.")
+        # Process diagnostics if timed out or failed to start
+        if self.process and self.process.poll() is not None:
+            _, stderr = self.process.communicate()
+            err_msg = stderr.decode(errors="replace").strip()
+            logger.error(f"Canva dev server process exited with code {self.process.returncode}: {err_msg}")
+        else:
+            logger.warning(f"Canva dev server failed to respond within {wait_timeout}s.")
         return False
 
     def stop(self) -> None:

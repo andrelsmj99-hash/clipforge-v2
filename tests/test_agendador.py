@@ -19,6 +19,8 @@ from clipforge.core.models import (
     Platform,
     Post,
     PostStatus,
+    Render,
+    RenderStatus,
     Video,
     VideoKind,
     VideoStatus,
@@ -214,3 +216,99 @@ def test_due_scanner_fails_post_with_no_resolvable_video(env):
     updated = db.get_post("post_orphan")
     assert updated.status == PostStatus.FAILED
     assert updated.error_message
+
+
+def test_create_batch_with_render_ids(env):
+    db, jq, video_ids = env
+    scheduler = BatchScheduler(db, jq)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    # Save completed renders
+    r1 = Render(id="rnd_1", video_id=video_ids[0], output_path="/fake/render/1.mp4", status=RenderStatus.COMPLETED)
+    r2 = Render(id="rnd_2", video_id=video_ids[1], output_path="/fake/render/2.mp4", status=RenderStatus.COMPLETED)
+    db.save_render(r1)
+    db.save_render(r2)
+
+    batch = scheduler.create_batch(
+        render_ids=["rnd_1", "rnd_2"],
+        account_id="acc1",
+        platform=Platform.TIKTOK,
+        caption_template="Clip {n}/{total}",
+        interval_seconds=1800,
+        start_at=start,
+    )
+
+    posts = db.list_posts(batch_id=batch.id)
+    assert len(posts) == 2
+    posts.sort(key=lambda p: p.scheduled_at)
+
+    assert posts[0].render_id == "rnd_1"
+    assert posts[0].video_id is None
+    assert posts[1].render_id == "rnd_2"
+    assert posts[1].video_id is None
+    assert posts[0].caption == "Clip 1/2"
+    assert posts[1].caption == "Clip 2/2"
+
+
+def test_create_batch_rejects_uncompleted_render(env):
+    db, jq, video_ids = env
+    scheduler = BatchScheduler(db, jq)
+
+    r_pending = Render(id="rnd_pending", video_id=video_ids[0], status=RenderStatus.PENDING)
+    db.save_render(r_pending)
+
+    with pytest.raises(ValueError, match="is not completed yet"):
+        scheduler.create_batch(
+            render_ids=["rnd_pending"],
+            account_id="acc1",
+            platform=Platform.YOUTUBE,
+            caption_template="test",
+        )
+
+
+def test_create_batch_with_renders_native_schedule_youtube(env):
+    db, jq, video_ids = env
+    scheduler = BatchScheduler(db, jq)
+
+    r = Render(id="rnd_yt", video_id=video_ids[0], output_path="/fake/render/yt.mp4", status=RenderStatus.COMPLETED)
+    db.save_render(r)
+
+    scheduler.create_batch(
+        render_ids=["rnd_yt"],
+        account_id="acc1",
+        platform=Platform.YOUTUBE,
+        caption_template="YouTube Short {n}",
+    )
+
+    jobs = [j for j in jq.list_jobs() if j.type == JobType.PUBLISH]
+    assert len(jobs) == 1
+    assert jobs[0].payload["video_path"] == "/fake/render/yt.mp4"
+    assert jobs[0].payload["platform"] == Platform.YOUTUBE.value
+
+
+def test_due_scanner_with_render_post(env):
+    db, jq, video_ids = env
+
+    r = Render(id="rnd_tt", video_id=video_ids[0], output_path="/fake/render/tiktok.mp4", status=RenderStatus.COMPLETED)
+    db.save_render(r)
+
+    post = Post(
+        id="post_render_due",
+        render_id="rnd_tt",
+        account_id="acc_tiktok",
+        platform=Platform.TIKTOK,
+        caption="Render viral",
+        scheduled_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+        status=PostStatus.SCHEDULED,
+    )
+    db.save_post(post)
+
+    scanner = DueScanner(db, jq)
+    count = scanner.run_once()
+
+    assert count == 1
+    jobs = [j for j in jq.list_jobs() if j.type == JobType.PUBLISH]
+    assert len(jobs) == 1
+    assert jobs[0].payload["post_id"] == "post_render_due"
+    assert jobs[0].payload["video_path"] == "/fake/render/tiktok.mp4"
+

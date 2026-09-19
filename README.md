@@ -69,6 +69,20 @@ clipforge.v2/
 └── requirements.txt
 ```
 
+## ⚙️ Instalação e Requisitos
+
+1. **Clone o repositório e prepare o ambiente virtual:**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+2. **Instale os navegadores do Playwright (essencial para automação de TikTok, Instagram e Canva):**
+```powershell
+playwright install chromium
+```
+
 ---
 
 ## 📦 Como Usar a CLI

@@ -1,4 +1,4 @@
-﻿import { useSelection } from "@canva/app-hooks";
+import { useSelection } from "@canva/app-hooks";
 import { Button, Rows, Text, Box } from "@canva/app-ui-kit";
 import { requestExport } from "@canva/design";
 import { upload } from "@canva/asset";
@@ -11,7 +11,7 @@ export const App = () => {
   const [statusMessage, setStatusMessage] = useState<string>("Aguardando seleção...");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
-  // Detect and capture user selection in Canva editor
+  // Detect and capture user selection in Canva editor for UI preview
   useEffect(() => {
     async function handleSelection() {
       if (videoSelection.count > 0) {
@@ -20,18 +20,7 @@ export const App = () => {
           if (draft.contents && draft.contents.length > 0) {
             const ref = draft.contents[0].ref;
             setSelectedRef(ref);
-            setStatusMessage(`Vídeo selecionado! Ref: ${ref}`);
-
-            // Send message to Playwright / parent window
-            window.parent.postMessage(
-              {
-                type: "CLIPFORGE_PLACEHOLDER_SELECTED",
-                ref,
-                count: videoSelection.count,
-                timestamp: Date.now(),
-              },
-              "*"
-            );
+            setStatusMessage(`Vídeo detectado no editor! Clique em 'Confirmar Slot de Vídeo' para mapear.`);
           }
         } catch (err: any) {
           console.error("Erro ao ler seleção de vídeo:", err);
@@ -44,6 +33,20 @@ export const App = () => {
   // Listen for render commands from ClipForge backend / Playwright
   useEffect(() => {
     const messageHandler = async (event: MessageEvent) => {
+      // Validate origin: accept local ClipForge dev server and Canva official domains
+      const origin = event.origin;
+      const isAllowedOrigin =
+        !origin ||
+        origin.startsWith("http://127.0.0.1") ||
+        origin.startsWith("http://localhost") ||
+        origin.endsWith(".canva.com") ||
+        origin === "https://www.canva.com";
+
+      if (!isAllowedOrigin) {
+        console.warn("Ignorando mensagem de origem não autorizada:", origin);
+        return;
+      }
+
       const data = event.data;
       if (!data || typeof data !== "object") return;
 
@@ -86,7 +89,7 @@ export const App = () => {
               response: exportResponse,
               timestamp: Date.now(),
             },
-            "*"
+            origin || "*"
           );
         } catch (err: any) {
           console.error("Erro no processamento de render:", err);
@@ -97,7 +100,7 @@ export const App = () => {
               error: err.message || String(err),
               timestamp: Date.now(),
             },
-            "*"
+            origin || "*"
           );
         } finally {
           setIsProcessing(false);
@@ -119,7 +122,7 @@ export const App = () => {
       if (draft.contents && draft.contents.length > 0) {
         const ref = draft.contents[0].ref;
         setSelectedRef(ref);
-        setStatusMessage(`Mapeado manualmente! Ref: ${ref}`);
+        setStatusMessage(`Slot confirmado com sucesso! Ref: ${ref}`);
         window.parent.postMessage(
           {
             type: "CLIPFORGE_PLACEHOLDER_SELECTED",

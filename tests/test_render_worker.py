@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for Editor Renderer and RenderWorker (Planejamento Seções 3.4 e 9).
 """
 
@@ -150,3 +150,113 @@ def test_local_media_server_serves_files_with_cors(tmp_path):
             assert content == b"video data bytes"
     finally:
         server.stop()
+
+
+def test_canva_renderer_fails_on_missing_download_url(env):
+    db, _, v, t, tmp_path = env
+    renders_dir = tmp_path / "renders"
+    renderer = CanvaRenderer(db=db, renders_dir=renders_dir)
+
+    with patch.object(renderer.dev_server, "is_healthy", return_value=True):
+        with patch("clipforge.modules.editor.renderer.sync_playwright") as mock_pw:
+            mock_context = MagicMock()
+            mock_page = MagicMock()
+            mock_pw.return_value.__enter__.return_value.chromium.launch_persistent_context.return_value = mock_context
+            renderer.session_manager.launch_context = MagicMock(return_value=mock_context)
+            mock_context.pages = [mock_page]
+
+            # When page.evaluate is called, trigger completion without downloadUrl
+            def mock_evaluate(script, *args):
+                # Simulate Canva app message without downloadUrl
+                for call in mock_page.expose_function.call_args_list:
+                    name, fn = call[0]
+                    if name == "onClipforgeRenderComplete":
+                        fn({"response": {}})
+
+            mock_page.evaluate.side_effect = mock_evaluate
+
+            with pytest.raises(RuntimeError, match="did not contain a valid download URL"):
+                renderer.render(video_id=v.id, template_id=t.id, render_id="r_no_url", timeout_seconds=5)
+
+            # Check DB record is FAILED
+            render_in_db = db.get_render("r_no_url")
+            assert render_in_db is not None
+            assert render_in_db.status == RenderStatus.FAILED
+
+            # Ensure no 0-byte file was left on disk
+            out_file = renders_dir / "r_no_url.mp4"
+            assert not out_file.exists()
+
+
+def test_canva_renderer_fails_on_zero_byte_download(env):
+    db, _, v, t, tmp_path = env
+    renders_dir = tmp_path / "renders"
+    renderer = CanvaRenderer(db=db, renders_dir=renders_dir)
+
+    with patch.object(renderer.dev_server, "is_healthy", return_value=True):
+        with patch("clipforge.modules.editor.renderer.sync_playwright") as mock_pw:
+            mock_context = MagicMock()
+            mock_page = MagicMock()
+            renderer.session_manager.launch_context = MagicMock(return_value=mock_context)
+            mock_context.pages = [mock_page]
+
+            def mock_evaluate(script, *args):
+                for call in mock_page.expose_function.call_args_list:
+                    name, fn = call[0]
+                    if name == "onClipforgeRenderComplete":
+                        fn({"response": {"downloadUrl": "https://export.canva.com/empty.mp4"}})
+
+            mock_page.evaluate.side_effect = mock_evaluate
+
+            # Simulate urlretrieve writing an empty file
+            def mock_urlretrieve(url, path):
+                open(path, "wb").close()
+
+            with patch("urllib.request.urlretrieve", side_effect=mock_urlretrieve):
+                with pytest.raises(RuntimeError, match="empty \\(0 bytes\\)"):
+                    renderer.render(video_id=v.id, template_id=t.id, render_id="r_zero_byte", timeout_seconds=5)
+
+            render_in_db = db.get_render("r_zero_byte")
+            assert render_in_db is not None
+            assert render_in_db.status == RenderStatus.FAILED
+            assert not (renders_dir / "r_zero_byte.mp4").exists()
+
+
+def test_canva_renderer_succeeds_with_valid_download(env):
+    db, _, v, t, tmp_path = env
+    renders_dir = tmp_path / "renders"
+    renderer = CanvaRenderer(db=db, renders_dir=renders_dir)
+
+    with patch.object(renderer.dev_server, "is_healthy", return_value=True):
+        with patch("clipforge.modules.editor.renderer.sync_playwright") as mock_pw:
+            mock_context = MagicMock()
+            mock_page = MagicMock()
+            renderer.session_manager.launch_context = MagicMock(return_value=mock_context)
+            mock_context.pages = [mock_page]
+
+            def mock_evaluate(script, *args):
+                for call in mock_page.expose_function.call_args_list:
+                    name, fn = call[0]
+                    if name == "onClipforgeRenderComplete":
+                        fn({"response": {"downloadUrl": "https://export.canva.com/video123.mp4"}})
+
+            mock_page.evaluate.side_effect = mock_evaluate
+
+            # Simulate urlretrieve writing valid video bytes
+            def mock_urlretrieve(url, path):
+                with open(path, "wb") as f:
+                    f.write(b"valid mp4 video content here")
+
+            with patch("urllib.request.urlretrieve", side_effect=mock_urlretrieve):
+                res = renderer.render(video_id=v.id, template_id=t.id, render_id="r_success", timeout_seconds=5)
+
+            assert res.status == RenderStatus.COMPLETED
+            out_file = renders_dir / "r_success.mp4"
+            assert out_file.exists()
+            assert out_file.read_bytes() == b"valid mp4 video content here"
+
+            render_in_db = db.get_render("r_success")
+            assert render_in_db is not None
+            assert render_in_db.status == RenderStatus.COMPLETED
+            assert render_in_db.output_path == str(out_file)
+

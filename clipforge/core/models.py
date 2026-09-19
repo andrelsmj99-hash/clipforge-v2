@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Platform(str, Enum):
@@ -109,6 +109,18 @@ class Template(BaseModel):
     placeholder_map: Optional[Dict[str, Any]] = None
     mapped_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_canva_ids(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            design_id = data.get("canva_design_id") or data.get("canva_template_id")
+            if design_id:
+                if not data.get("canva_design_id"):
+                    data["canva_design_id"] = design_id
+                if not data.get("canva_template_id"):
+                    data["canva_template_id"] = design_id
+        return data
 
 
 class Render(BaseModel):

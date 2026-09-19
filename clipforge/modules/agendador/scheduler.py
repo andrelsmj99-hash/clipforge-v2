@@ -36,27 +36,39 @@ class BatchScheduler:
 
     def create_batch(
         self,
-        video_ids: List[str],
-        account_id: str,
-        platform: Platform,
-        caption_template: str,
+        video_ids: Optional[List[str]] = None,
+        account_id: str = "",
+        platform: Platform = Platform.YOUTUBE,
+        caption_template: str = "",
         interval_seconds: int = 3600,
         start_at: Optional[datetime] = None,
         title: Optional[str] = None,
         tags: Optional[List[str]] = None,
         native_schedule: bool = False,
+        render_ids: Optional[List[str]] = None,
     ) -> PostBatch:
         """
-        Cria um PostBatch + um Post por vídeo, com `scheduled_at` calculado
+        Cria um PostBatch + um Post por vídeo/render, com `scheduled_at` calculado
         como `start_at + i * interval_seconds`. Pra YouTube, já enfileira o
         job de publish (upload com publishAt nativo); pras demais, deixa
         SCHEDULED pro DueScanner.
 
+        Aceita tanto `video_ids` (vídeos baixados brutos) quanto `render_ids`
+        (vídeos finalizados pelo editor/templates).
+
         `caption_template` pode conter `{n}` (número sequencial, 1-based)
         e `{total}` (total de posts do lote) — ex: "Parte {n}/{total} 🔥".
         """
-        if not video_ids:
-            raise ValueError("create_batch requires at least one video_id")
+        items: List[tuple[str, str]] = []
+        if video_ids:
+            for vid in video_ids:
+                items.append(("video", vid))
+        if render_ids:
+            for rid in render_ids:
+                items.append(("render", rid))
+
+        if not items:
+            raise ValueError("create_batch requires at least one video_id or render_id")
 
         start_at = start_at or datetime.now(timezone.utc)
         batch = PostBatch(
@@ -69,13 +81,37 @@ class BatchScheduler:
         )
         self.db.save_post_batch(batch)
 
-        total = len(video_ids)
-        for i, video_id in enumerate(video_ids):
-            video = self.db.get_video(video_id)
-            if not video:
-                raise ValueError(f"Video not found: {video_id}")
-            if video.status != VideoStatus.DOWNLOADED or not video.local_path:
-                raise ValueError(f"Video {video_id} is not downloaded yet (status={video.status})")
+        total = len(items)
+        for i, (item_type, item_id) in enumerate(items):
+            if item_type == "video":
+                video = self.db.get_video(item_id)
+                if not video:
+                    raise ValueError(f"Video not found: {item_id}")
+                if video.status != VideoStatus.DOWNLOADED or not video.local_path:
+                    raise ValueError(f"Video {item_id} is not downloaded yet (status={video.status})")
+
+                post_title = title or video.title
+                video_path = video.local_path
+                post_video_id: Optional[str] = item_id
+                post_render_id: Optional[str] = None
+            else:
+                from clipforge.core.models import RenderStatus
+                render = self.db.get_render(item_id)
+                if not render:
+                    raise ValueError(f"Render not found: {item_id}")
+                if render.status != RenderStatus.COMPLETED or not render.output_path:
+                    raise ValueError(f"Render {item_id} is not completed yet (status={render.status})")
+
+                v_title = None
+                if render.video_id:
+                    v = self.db.get_video(render.video_id)
+                    if v:
+                        v_title = v.title
+
+                post_title = title or v_title or f"Render {render.id}"
+                video_path = render.output_path
+                post_video_id = None
+                post_render_id = item_id
 
             scheduled_at = start_at + timedelta(seconds=interval_seconds * i)
             caption = caption_template.format(n=i + 1, total=total)
@@ -83,10 +119,11 @@ class BatchScheduler:
             post = Post(
                 id=f"post_{uuid.uuid4().hex[:12]}",
                 batch_id=batch.id,
-                video_id=video_id,
+                video_id=post_video_id,
+                render_id=post_render_id,
                 account_id=account_id,
                 platform=platform,
-                title=video.title,
+                title=post_title,
                 caption=caption,
                 tags=tags or [],
                 scheduled_at=scheduled_at,
@@ -104,7 +141,7 @@ class BatchScheduler:
                         "post_id": post.id,
                         "account_id": account_id,
                         "platform": platform.value,
-                        "video_path": video.local_path,
+                        "video_path": video_path,
                         "title": post.title,
                         "description": post.caption,
                         "tags": post.tags,

@@ -1,4 +1,4 @@
-﻿"""
+"""
 TikTok Studio Publisher implementing automated video upload and native scheduling via Playwright.
 """
 
@@ -81,14 +81,16 @@ class TikTokPublisher(BaseConnector):
 
         FAILURES_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+        timeout_ms = timeout_seconds * 1000
+
         with sync_playwright() as p:
             context = self.session_manager.launch_context(p, headless=headless)
             page = context.new_page() if not context.pages else context.pages[0]
+            page.set_default_timeout(timeout_ms)
 
             try:
                 # 1. Navigate to TikTok Studio upload page
                 page.goto("https://www.tiktok.com/tiktokstudio/upload", wait_until="domcontentloaded")
-                time.sleep(3.0)
 
                 # Check if redirected to login
                 if "login" in page.url:
@@ -98,12 +100,13 @@ class TikTokPublisher(BaseConnector):
 
                 # 2. Upload video file via input[type=file]
                 file_input = page.locator('input[type="file"]')
-                file_input.wait_for(timeout=20000)
+                file_input.wait_for(timeout=min(timeout_ms, 30000))
                 file_input.set_input_files(str(target_file))
-                logger.info(f"File {target_file.name} sent to file input. Waiting for processing...")
+                logger.info(f"File {target_file.name} sent to file input. Waiting for upload processing...")
 
-                # 3. Wait for video upload to process
-                time.sleep(5.0)
+                # 3. Wait for submit button to be visible and interactive
+                submit_button = page.locator('button:has-text("Schedule"), button:has-text("Post"), button:has-text("Publicar"), button:has-text("Agendar")').first
+                submit_button.wait_for(state="visible", timeout=min(timeout_ms, 60000))
 
                 # 4. Fill in caption / hashtags
                 caption_text = post.caption or post.title or ""
@@ -124,16 +127,23 @@ class TikTokPublisher(BaseConnector):
                     schedule_switch = page.locator('input[type="checkbox"][name*="schedule" i], div[role="switch"]').first
                     if schedule_switch.is_visible() and not schedule_switch.is_checked():
                         schedule_switch.click()
-                        time.sleep(1.0)
+                        time.sleep(0.5)
 
                 # 6. Click Submit / Schedule button
-                submit_button = page.locator('button:has-text("Schedule"), button:has-text("Post"), button:has-text("Publicar"), button:has-text("Agendar")').first
-                submit_button.wait_for(state="visible", timeout=30000)
                 submit_button.click()
                 logger.info("Clicked submit/schedule button. Awaiting confirmation...")
 
-                # Wait for confirmation dialog or URL change
-                time.sleep(5.0)
+                # 7. Wait for confirmation dialog or URL change
+                try:
+                    page.wait_for_selector(
+                        'div:has-text("Manage your posts"), div:has-text("Gerenciar suas postagens"), div:has-text("uploaded"), div:has-text("scheduled"), div[role="dialog"]',
+                        timeout=min(timeout_ms, 15000),
+                    )
+                except Exception:
+                    if "/upload" not in page.url:
+                        logger.info("Page navigated away from upload page — upload confirmed.")
+                    else:
+                        logger.warning("Confirmation dialog not explicitly detected, proceeding with post ID generation.")
 
                 external_id = f"tt_post_{int(time.time())}"
                 logger.info(f"TikTok post published/scheduled successfully (ID: {external_id})")

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Interactive Template Mapper via Playwright and Canva Apps SDK.
 """
 
@@ -69,6 +69,9 @@ class TemplateMapper:
             # Bridge postMessage from Canva App iframe to parent window
             page.add_init_script("""
                 window.addEventListener("message", (event) => {
+                    if (event.origin && !event.origin.includes("canva") && !event.origin.includes("localhost") && !event.origin.includes("127.0.0.1")) {
+                        return;
+                    }
                     if (event.data && event.data.type === "CLIPFORGE_PLACEHOLDER_SELECTED") {
                         if (window.onClipforgePlaceholderSelected) {
                             window.onClipforgePlaceholderSelected(event.data);
@@ -76,6 +79,7 @@ class TemplateMapper:
                     }
                 });
             """)
+
 
             page.goto(template.template_url, wait_until="domcontentloaded")
 

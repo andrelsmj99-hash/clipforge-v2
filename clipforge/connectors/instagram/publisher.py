@@ -1,4 +1,4 @@
-﻿"""
+"""
 Meta Business Suite Publisher implementing automated Instagram Reels upload and native scheduling via Playwright.
 """
 
@@ -81,14 +81,16 @@ class InstagramPublisher(BaseConnector):
 
         FAILURES_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+        timeout_ms = timeout_seconds * 1000
+
         with sync_playwright() as p:
             context = self.session_manager.launch_context(p, headless=headless)
             page = context.new_page() if not context.pages else context.pages[0]
+            page.set_default_timeout(timeout_ms)
 
             try:
                 # 1. Navigate to composer
                 page.goto("https://business.facebook.com/latest/composer", wait_until="domcontentloaded")
-                time.sleep(3.0)
 
                 # Check if redirected to login
                 if "login" in page.url:
@@ -98,12 +100,13 @@ class InstagramPublisher(BaseConnector):
 
                 # 2. Upload video file via input[type=file]
                 file_input = page.locator('input[type="file"]').first
-                file_input.wait_for(timeout=20000)
+                file_input.wait_for(timeout=min(timeout_ms, 30000))
                 file_input.set_input_files(str(target_file))
                 logger.info(f"File {target_file.name} sent to file input. Waiting for processing...")
 
-                # 3. Wait for video processing
-                time.sleep(5.0)
+                # 3. Wait for submit button to become visible and interactive
+                submit_button = page.locator('button:has-text("Schedule"), button:has-text("Publish"), button:has-text("Programar"), button:has-text("Publicar")').first
+                submit_button.wait_for(state="visible", timeout=min(timeout_ms, 60000))
 
                 # 4. Fill in caption / hashtags
                 caption_text = post.caption or post.title or ""
@@ -124,15 +127,23 @@ class InstagramPublisher(BaseConnector):
                     schedule_radio = page.locator('input[type="radio"][value*="SCHEDULE" i], button:has-text("Schedule"), button:has-text("Programar")').first
                     if schedule_radio.is_visible():
                         schedule_radio.click()
-                        time.sleep(1.0)
+                        time.sleep(0.5)
 
                 # 6. Click Submit / Schedule button
-                submit_button = page.locator('button:has-text("Schedule"), button:has-text("Publish"), button:has-text("Programar"), button:has-text("Publicar")').first
-                submit_button.wait_for(state="visible", timeout=30000)
                 submit_button.click()
                 logger.info("Clicked submit/schedule button. Awaiting confirmation...")
 
-                time.sleep(5.0)
+                # 7. Wait for confirmation dialog or URL change
+                try:
+                    page.wait_for_selector(
+                        'div:has-text("published"), div:has-text("scheduled"), div:has-text("publicado"), div:has-text("programado"), div[role="dialog"]',
+                        timeout=min(timeout_ms, 15000),
+                    )
+                except Exception:
+                    if "/composer" not in page.url:
+                        logger.info("Meta composer navigated away — submission confirmed.")
+                    else:
+                        logger.warning("Confirmation dialog not explicitly detected; proceeding with post ID generation.")
 
                 external_id = f"ig_post_{int(time.time())}"
                 logger.info(f"Instagram post scheduled successfully via Meta Business Suite (ID: {external_id})")

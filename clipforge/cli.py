@@ -625,7 +625,8 @@ def batch() -> None:
 
 
 @batch.command("create")
-@click.argument("video_ids", nargs=-1, required=True)
+@click.argument("video_ids", nargs=-1, required=False)
+@click.option("--render-id", "-r", "render_ids", multiple=True, help="Render ID(s) do Canva/Editor para postagem")
 @click.option("--account-id", required=True, help="Conta de destino (account_id já conectado)")
 @click.option("--platform", "platform_str", required=True, type=click.Choice([p.value for p in Platform]), help="Plataforma de destino")
 @click.option("--caption", required=True, help="Legenda (aceita {n} e {total}, ex: 'Parte {n}/{total}')")
@@ -636,6 +637,7 @@ def batch() -> None:
 @click.option("--native-schedule", is_flag=True, default=False, help="Forçar agendamento nativo imediato (para TikTok/Instagram)")
 def create_batch(
     video_ids: tuple,
+    render_ids: tuple,
     account_id: str,
     platform_str: str,
     caption: str,
@@ -645,7 +647,11 @@ def create_batch(
     tags: Optional[str],
     native_schedule: bool,
 ) -> None:
-    """Cria um lote: um post por VIDEO_ID, espaçados por --interval-minutes."""
+    """Cria um lote: um post por VIDEO_ID ou RENDER_ID, espaçados por --interval-minutes."""
+    if not video_ids and not render_ids:
+        console.print("[bold red]Informe ao menos um VIDEO_ID ou passe --render-id (-r).[/bold red]")
+        sys.exit(1)
+
     db = Database()
     jq = JobQueue(db)
     scheduler = BatchScheduler(db, jq)
@@ -655,7 +661,8 @@ def create_batch(
 
     try:
         created_batch = scheduler.create_batch(
-            video_ids=list(video_ids),
+            video_ids=list(video_ids) if video_ids else None,
+            render_ids=list(render_ids) if render_ids else None,
             account_id=account_id,
             platform=platform,
             caption_template=caption,
@@ -669,9 +676,10 @@ def create_batch(
         console.print(f"[bold red]Failed to create batch:[/bold red] {e}")
         sys.exit(1)
 
+    total_items = len(video_ids) + len(render_ids)
     native = (platform in NATIVE_SCHEDULE_ON_UPLOAD) or native_schedule
     console.print(Panel(
-        f"[bold green]Batch {created_batch.id} criado com {len(video_ids)} posts[/bold green]\n"
+        f"[bold green]Batch {created_batch.id} criado com {total_items} posts[/bold green]\n"
         f"Início: {created_batch.start_at.isoformat()} | Intervalo: {interval_minutes}min\n"
         + (
             "[cyan]YouTube: upload já enfileirado com publishAt nativo — a plataforma publica sozinha.[/cyan]"

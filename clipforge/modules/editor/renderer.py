@@ -1,4 +1,4 @@
-﻿"""
+"""
 Video Editor & Canva Automated Renderer.
 Orchestrates Canva template opening, video asset injection, export, and MP4 download.
 """
@@ -159,6 +159,9 @@ class CanvaRenderer:
 
                 page.add_init_script("""
                     window.addEventListener("message", (event) => {
+                        if (event.origin && !event.origin.includes("canva") && !event.origin.includes("localhost") && !event.origin.includes("127.0.0.1")) {
+                            return;
+                        }
                         if (event.data && event.data.type === "CLIPFORGE_RENDER_COMPLETED") {
                             if (window.onClipforgeRenderComplete) {
                                 window.onClipforgeRenderComplete(event.data);
@@ -177,23 +180,23 @@ class CanvaRenderer:
                 # Wait for Canva editor and app frame to load (e.g. 5 seconds)
                 time.sleep(5.0)
 
-                # Send START_RENDER message to all iframes
+                # Send START_RENDER message to all iframes safely passing video_http_url
                 logger.info("Sending CLIPFORGE_START_RENDER to Canva App...")
-                page.evaluate(f"""() => {{
-                    window.postMessage({{
+                page.evaluate("""(videoUrl) => {
+                    window.postMessage({
                         type: 'CLIPFORGE_START_RENDER',
-                        videoUrl: '{video_http_url}',
-                    }}, '*');
+                        videoUrl: videoUrl,
+                    }, '*');
                     // Broadcast to frames
-                    for (let i = 0; i < window.frames.length; i++) {{
-                        try {{
-                            window.frames[i].postMessage({{
+                    for (let i = 0; i < window.frames.length; i++) {
+                        try {
+                            window.frames[i].postMessage({
                                 type: 'CLIPFORGE_START_RENDER',
-                                videoUrl: '{video_http_url}',
-                            }}, '*');
-                        }} catch(e) {{}}
-                    }}
-                }}""")
+                                videoUrl: videoUrl,
+                            }, '*');
+                        } catch(e) {}
+                    }
+                }""", video_http_url)
 
                 # Wait for render to complete
                 finished = render_done.wait(timeout=timeout_seconds)
@@ -210,20 +213,28 @@ class CanvaRenderer:
                 response_obj = result_data.get("response", {})
                 download_url = response_obj.get("downloadUrl") or response_obj.get("url")
 
-                output_path = self.renders_dir / f"{r_id}.mp4"
+                if not download_url:
+                    raise RuntimeError(
+                        f"Canva export response did not contain a valid download URL. Response payload: {result_data}"
+                    )
 
-                if download_url:
-                    logger.info(f"Downloading exported video from {download_url}...")
-                    urllib.request.urlretrieve(download_url, str(output_path))
-                else:
-                    # If local or mock test response returned, ensure an output file is created
-                    output_path.write_bytes(b"")
+                output_path = self.renders_dir / f"{r_id}.mp4"
+                logger.info(f"Downloading exported video from {download_url}...")
+                urllib.request.urlretrieve(download_url, str(output_path))
+
+                if not output_path.exists() or output_path.stat().st_size == 0:
+                    if output_path.exists():
+                        output_path.unlink(missing_ok=True)
+                    raise RuntimeError(
+                        f"Downloaded video file from Canva is empty (0 bytes) or was not created: {output_path}"
+                    )
 
                 render_record.output_path = str(output_path)
                 render_record.status = RenderStatus.COMPLETED
                 self.db.save_render(render_record)
-                logger.info(f"Render {r_id} completed: {output_path}")
+                logger.info(f"Render {r_id} completed: {output_path} ({output_path.stat().st_size} bytes)")
                 return render_record
+
 
         except Exception as e:
             render_record.status = RenderStatus.FAILED

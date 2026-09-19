@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Callable, Optional
 import flet as ft
 
-from clipforge.core.models import Platform, PostStatus
+from clipforge.core.models import Platform, PostStatus, RenderStatus
 from clipforge.modules.agendador.due_scanner import DueScanner
 from clipforge.modules.agendador.scheduler import BatchScheduler
 from clipforge.ui.state import UIState
@@ -60,6 +60,18 @@ class SchedulerView(ft.Container):
             value=True,
         )
 
+        self.source_type = ft.RadioGroup(
+            content=ft.Row(
+                controls=[
+                    ft.Radio(value="videos", label="Vídeos Baixados"),
+                    ft.Radio(value="renders", label="Renders Prontos (Canva/Editor)"),
+                ],
+                spacing=16,
+            ),
+            value="videos",
+            on_change=lambda _: self._update_items_list(),
+        )
+
         self.video_selection_list = ft.ListView(
             spacing=4,
             height=160,
@@ -111,7 +123,8 @@ class SchedulerView(ft.Container):
                                     ],
                                 ),
                                 ft.Container(height=4),
-                                ft.Text("Selecione os vídeos para incluir no lote:", size=13, weight=ft.FontWeight.BOLD),
+                                ft.Text("Origem dos vídeos:", size=13, weight=ft.FontWeight.BOLD),
+                                self.source_type,
                                 ft.Container(
                                     content=self.video_selection_list,
                                     border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
@@ -153,7 +166,7 @@ class SchedulerView(ft.Container):
 
     def refresh(self) -> None:
         self._update_accounts_dropdown()
-        self._update_videos_list()
+        self._update_items_list()
 
         posts = self.state.get_posts(limit=30)
         new_rows = []
@@ -189,17 +202,29 @@ class SchedulerView(ft.Container):
         if options and not self.account_dropdown.value:
             self.account_dropdown.value = options[0].key
 
-    def _update_videos_list(self) -> None:
-        videos = self.state.get_videos(limit=30)
+    def _update_items_list(self) -> None:
         checkboxes = []
-        for v in videos:
-            checkboxes.append(
-                ft.Checkbox(
-                    label=f"[{v.id}] {v.title or v.source_url} ({v.kind.value})",
-                    value=False,
-                    data=v.id,
+        if self.source_type.value == "renders":
+            renders = self.state.get_renders(limit=50)
+            completed_renders = [r for r in renders if r.status == RenderStatus.COMPLETED and r.output_path]
+            for r in completed_renders:
+                checkboxes.append(
+                    ft.Checkbox(
+                        label=f"[{r.id}] Vídeo: {r.video_id} (Template: {r.template_id or 'Custom'})",
+                        value=False,
+                        data=r.id,
+                    )
                 )
-            )
+        else:
+            videos = self.state.get_videos(limit=30)
+            for v in videos:
+                checkboxes.append(
+                    ft.Checkbox(
+                        label=f"[{v.id}] {v.title or v.source_url} ({v.kind.value})",
+                        value=False,
+                        data=v.id,
+                    )
+                )
         self.video_selection_list.controls = checkboxes
 
     def _handle_platform_change(self, _):
@@ -219,14 +244,14 @@ class SchedulerView(ft.Container):
                 self.on_notify("Selecione a plataforma e uma conta conectada.", True)
             return
 
-        selected_video_ids = [
+        selected_ids = [
             cb.data for cb in self.video_selection_list.controls
             if isinstance(cb, ft.Checkbox) and cb.value
         ]
 
-        if not selected_video_ids:
+        if not selected_ids:
             if self.on_notify:
-                self.on_notify("Selecione pelo menos um vídeo para agendar.", True)
+                self.on_notify("Selecione pelo menos um item para agendar.", True)
             return
 
         caption_template = self.caption_input.value or "Vídeo {n}/{total}"
@@ -234,19 +259,22 @@ class SchedulerView(ft.Container):
         interval_seconds = interval_minutes * 60
         start_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
+        is_render = (self.source_type.value == "renders")
+
         try:
             scheduler = BatchScheduler(self.state.db, self.state.queue)
             batch = scheduler.create_batch(
                 account_id=account_id,
                 platform=Platform(platform_str),
-                video_ids=selected_video_ids,
+                video_ids=None if is_render else selected_ids,
+                render_ids=selected_ids if is_render else None,
                 caption_template=caption_template,
                 interval_seconds=interval_seconds,
                 start_at=start_at,
                 native_schedule=self.native_schedule_cb.value,
             )
             if self.on_notify:
-                self.on_notify(f"Lote '{batch.id}' criado com {len(selected_video_ids)} postagens!", False)
+                self.on_notify(f"Lote '{batch.id}' criado com {len(selected_ids)} postagens!", False)
             self.refresh()
         except Exception as e:
             if self.on_notify:
@@ -255,9 +283,9 @@ class SchedulerView(ft.Container):
     def _handle_scan_due(self, _):
         try:
             scanner = DueScanner(self.state.db, self.state.queue)
-            enqueued = scanner.scan_and_enqueue_due_posts()
+            enqueued = scanner.run_once()
             if self.on_notify:
-                self.on_notify(f"Due Scanner executado: {len(enqueued)} publicações vencidas enfileiradas.", False)
+                self.on_notify(f"Due Scanner executado: {enqueued} publicações vencidas enfileiradas.", False)
             self.refresh()
         except Exception as e:
             if self.on_notify:
