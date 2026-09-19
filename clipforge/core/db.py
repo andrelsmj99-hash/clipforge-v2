@@ -650,10 +650,12 @@ class Database:
 
     def _row_to_template(self, row: sqlite3.Row) -> Template:
         cols = row.keys()
+        design_id = (row["canva_design_id"] if "canva_design_id" in cols and row["canva_design_id"] else None) or (
+            row["canva_template_id"] if "canva_template_id" in cols and row["canva_template_id"] else None
+        )
         return Template(
             id=row["id"],
-            canva_template_id=row["canva_template_id"] if "canva_template_id" in cols else None,
-            canva_design_id=row["canva_design_id"] if "canva_design_id" in cols else None,
+            canva_design_id=design_id,
             name=row["name"],
             template_url=row["template_url"] if "template_url" in cols else None,
             placeholder_map=json.loads(row["placeholder_map"]) if row["placeholder_map"] else None,

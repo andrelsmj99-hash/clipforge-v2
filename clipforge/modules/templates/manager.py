@@ -1,4 +1,4 @@
-﻿"""
+"""
 Templates Manager — CRUD and normalization for Canva templates.
 """
 
@@ -45,7 +45,6 @@ class TemplateManager:
 
         template = Template(
             id=template_id,
-            canva_template_id=design_id,
             canva_design_id=design_id,
             name=name,
             template_url=template_url,

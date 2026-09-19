@@ -102,7 +102,6 @@ class Video(BaseModel):
 
 class Template(BaseModel):
     id: str
-    canva_template_id: Optional[str] = None
     canva_design_id: Optional[str] = None
     name: str
     template_url: Optional[str] = None
@@ -116,11 +115,17 @@ class Template(BaseModel):
         if isinstance(data, dict):
             design_id = data.get("canva_design_id") or data.get("canva_template_id")
             if design_id:
-                if not data.get("canva_design_id"):
-                    data["canva_design_id"] = design_id
-                if not data.get("canva_template_id"):
-                    data["canva_template_id"] = design_id
+                data["canva_design_id"] = design_id
         return data
+
+    @property
+    def canva_template_id(self) -> Optional[str]:
+        """Backward-compatible property for canva_design_id."""
+        return self.canva_design_id
+
+    @canva_template_id.setter
+    def canva_template_id(self, val: Optional[str]) -> None:
+        self.canva_design_id = val
 
 
 class Render(BaseModel):

@@ -4,6 +4,7 @@ TikTok Studio Publisher implementing automated video upload and native schedulin
 
 from __future__ import annotations
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +89,28 @@ class TikTokPublisher(BaseConnector):
             page = context.new_page() if not context.pages else context.pages[0]
             page.set_default_timeout(timeout_ms)
 
+            captured_external_id: list[str] = []
+
+            def _on_response(res):
+                try:
+                    url = res.url.lower()
+                    if any(k in url for k in ["item/create", "web/project/post", "commit", "publish", "aweme/create", "project/create"]):
+                        if res.status == 200 and "json" in res.headers.get("content-type", ""):
+                            body = res.json()
+                            data = body.get("data") if isinstance(body.get("data"), dict) else body
+                            for key in ("item_id", "aweme_id", "project_id", "video_id", "id"):
+                                val = data.get(key)
+                                if val:
+                                    captured_external_id.append(str(val))
+                                    break
+                except Exception:
+                    pass
+
+            try:
+                page.on("response", _on_response)
+            except Exception:
+                pass
+
             try:
                 # 1. Navigate to TikTok Studio upload page
                 page.goto("https://www.tiktok.com/tiktokstudio/upload", wait_until="domcontentloaded")
@@ -145,8 +168,30 @@ class TikTokPublisher(BaseConnector):
                     else:
                         logger.warning("Confirmation dialog not explicitly detected, proceeding with post ID generation.")
 
-                external_id = f"tt_post_{int(time.time())}"
-                logger.info(f"TikTok post published/scheduled successfully (ID: {external_id})")
+                # 8. Extract real external ID from captured network response, current URL, or DOM links
+                real_id = captured_external_id[0] if captured_external_id else None
+                if not real_id:
+                    url_match = re.search(r"/video/(\d+)", page.url)
+                    if url_match:
+                        real_id = url_match.group(1)
+
+                if not real_id:
+                    try:
+                        for anchor in page.locator('a[href*="/video/"], a[href*="itemId="]').all():
+                            href = anchor.get_attribute("href") or ""
+                            match = re.search(r"/video/(\d+)|itemId=(\d+)", href)
+                            if match:
+                                real_id = match.group(1) or match.group(2)
+                                break
+                    except Exception:
+                        pass
+
+                external_id = real_id or f"tt_post_{int(time.time())}"
+                if real_id:
+                    logger.info(f"Extracted real TikTok item ID: {external_id}")
+                else:
+                    logger.info(f"TikTok post published/scheduled. Real ID not found in DOM/Network response, using tracking ID: {external_id}")
+
                 context.close()
                 return external_id
 
