@@ -7,13 +7,48 @@ import logging
 import os
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
 
+from clipforge.core.config import PROJECT_ROOT
+
 logger = logging.getLogger(__name__)
 
-CANVA_APP_DIR = Path(__file__).resolve().parents[3] / "canva_app"
+
+def resolve_canva_app_dir() -> Path:
+    """Dynamically resolve the Canva Apps SDK directory across dev and PyInstaller builds."""
+    # 1. Environment variable override
+    env_dir = os.getenv("CLIPFORGE_CANVA_APP_DIR")
+    if env_dir:
+        p = Path(env_dir)
+        if (p / "package.json").exists():
+            return p
+
+    # 2. Check candidates
+    candidates = [
+        PROJECT_ROOT / "canva_app",
+        Path.cwd() / "canva_app",
+    ]
+
+    if getattr(sys, "frozen", False):
+        exe_path = Path(sys.executable).resolve()
+        candidates.extend([
+            exe_path.parent / "canva_app",
+            exe_path.parent.parent / "canva_app",
+        ])
+    else:
+        candidates.append(Path(__file__).resolve().parents[3] / "canva_app")
+
+    for candidate in candidates:
+        if candidate and candidate.exists() and (candidate / "package.json").exists():
+            return candidate
+
+    return PROJECT_ROOT / "canva_app"
+
+
+CANVA_APP_DIR = resolve_canva_app_dir()
 DEFAULT_PORT = 8080
 
 
@@ -29,10 +64,10 @@ def is_dev_server_running(host: str = "localhost", port: int = DEFAULT_PORT, tim
 class CanvaDevServer:
     def __init__(
         self,
-        app_dir: Path | str = CANVA_APP_DIR,
+        app_dir: Optional[Path | str] = None,
         port: int = DEFAULT_PORT,
     ):
-        self.app_dir = Path(app_dir)
+        self.app_dir = Path(app_dir) if app_dir else resolve_canva_app_dir()
         self.port = port
         self.process: Optional[subprocess.Popen] = None
 
