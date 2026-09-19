@@ -1,0 +1,49 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# Node / Canva App
+node_modules/
+
+# Dados locais, banco SQLite, credenciais e mídias baixadas
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.mp4
+*.m4a
+*.webm
+*.part
+*.ytdl
+
+# Secrets & Environment
+.env
+*.pem
+*.key
+client_secret*.json
+
+# Logs
+logs/
+*.log
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build artifacts (PyInstaller / Flet Pack)
+build/
+dist/
+*.spec
+
+

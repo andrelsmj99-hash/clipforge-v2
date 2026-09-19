@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clipforge"
+version = "0.1.0"
+description = "Clip Forge V2 — Local video downloading, template editing, scheduling and multi-platform publishing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "yt-dlp>=2024.0.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth-httplib2>=0.2.0",
+    "playwright>=1.40.0",
+    "pydantic>=2.5.0",
+    "rich>=13.7.0",
+    "click>=8.1.0",
+    "imageio-ffmpeg>=0.5.0",
+    "flet>=0.28.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0"
+]
+
+
+[project.scripts]
+clipforge = "clipforge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clipforge*"]
